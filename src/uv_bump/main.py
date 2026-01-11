@@ -26,19 +26,44 @@ class UVSyncError(Exception):  # noqa: D101
         return f"UVSyncError(exit_code={self.exit_code}, message=\n" + self.msg + ")"
 
 
-def upgrade(root_pyproject_toml_file: Path | None = None) -> None:
-    """Upgrade minimum versions of dependencies in specified pyproject.toml."""
+def upgrade(
+    root_pyproject_toml_file: Path | None = None, *, verbose: bool = False
+) -> None:
+    """
+    Upgrade minimum versions of dependencies in specified pyproject.toml.
+
+    Params:
+        root_pyproject_toml_file: main pyproject.toml file. If using workspaces, should
+                                  be the root one.
+        verbose: report per pyproject.toml file the package version changes made.
+    """
     if root_pyproject_toml_file is None:
         root_pyproject_toml_file = Path(PYPROJECT_FILE_NAME)
 
     lock_path = root_pyproject_toml_file.parent / LOCK_FILE_NAME
 
+    package_version_before = collect_package_versions_from_lock_file(lock_path)
+
     run_uv_sync()
 
-    package_versions = collect_package_versions_from_lock_file(lock_path)
+    package_version_after = collect_package_versions_from_lock_file(lock_path)
+
     pyproject_files = collect_all_pyproject_files(lock_path)
     for pyproject_file in pyproject_files:
-        update_pyproject_toml(pyproject_file, package_versions)
+        packages_updated = update_pyproject_toml(pyproject_file, package_version_after)
+
+        if verbose:
+            print(f"Processed {pyproject_file}")  # noqa: T201
+
+            for pkg in packages_updated:
+                version_before = package_version_before[pkg]
+                version_after = package_version_after[pkg]
+                print(  # noqa: T201
+                    f"\t{pkg}: {version_before} => {version_after}"
+                )
+
+            if not packages_updated:
+                print("\tNo packages updated")  # noqa: T201
 
 
 def run_uv_sync() -> None:
@@ -108,28 +133,38 @@ def collect_all_pyproject_files(lock_path: Path) -> list[Path]:
     return [lock_path.parent / PYPROJECT_FILE_NAME]
 
 
-def update_pyproject_toml(file: Path, package_versions: dict[str, str]) -> None:
+def update_pyproject_toml(file: Path, package_versions: dict[str, str]) -> list[str]:
     """
     Update specified pyproject.toml file with minimum version bounds (>=, ~=).
 
     Params:
-         file: the path to the pyproject.toml file
-         package_version_updated: dict of package names and package versions.
+        file: the path to the pyproject.toml file
+        package_version_updated: dict of package names and package versions.
+
+    Returns:
+        list of packages updated
+
     """
     contents = file.read_text(encoding="utf-8")
-    contents_updated = _update_pyproject_contents(contents, package_versions)
+    contents_updated, packages_updated = _update_pyproject_contents(
+        contents, package_versions
+    )
     file.write_text(contents_updated, encoding="utf-8")
+    return packages_updated
 
 
 def _update_pyproject_contents(
     contents: str, package_version_updated: dict[str, str]
-) -> str:
+) -> tuple[str, list[str]]:
+    package_updates = []
     for package, version in package_version_updated.items():
-        contents = _replace_package_version(contents, package, version)
-    return contents
+        contents, count = _replace_package_version(contents, package, version)
+        if count > 0:
+            package_updates.append(package)
+    return contents, package_updates
 
 
-def _replace_package_version(text: str, package: str, version: str) -> str:
+def _replace_package_version(text: str, package: str, version: str) -> tuple[str, int]:
     # we assume the following:
     # 1. the package name is directly preceded by a double quote
     # 2. (?:\[[^\]]*\])? => after the package name there can be extras, if so, we
@@ -141,5 +176,13 @@ def _replace_package_version(text: str, package: str, version: str) -> str:
     pattern = r'"(' + package + r'(?:\[[^\]]*\])?)(>|>=|~=)[^"`,;]+'
     replacement = r'"\1>=' + version
 
-    text, _ = re.subn(pattern, replacement, text)
-    return text
+    text_updated = re.sub(pattern, replacement, text)
+
+    # we count the number of lines changed, rather than using re.subn, as re.subn still
+    # reports changes due to the dynamic pattern
+    num_lines_changes = sum(
+        s1 != s2
+        for s1, s2 in zip(text.splitlines(), text_updated.splitlines(), strict=True)
+    )
+
+    return text_updated, num_lines_changes

@@ -11,7 +11,10 @@ PROG = "uv-bump"
 
 def cli() -> None:
     args = parse_args(sys.argv[1:])
-    upgrade(Path(args.pyproject_toml) if args.pyproject_toml is not None else None)
+    upgrade(
+        Path(args.pyproject_toml) if args.pyproject_toml is not None else None,
+        verbose=args.verbose,
+    )
 
 
 def parse_args(args: Sequence[str]) -> argparse.Namespace:
@@ -28,6 +31,9 @@ def parse_args(args: Sequence[str]) -> argparse.Namespace:
         help="File to update",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {_version()}")
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Report changes made"
+    )
 
     return parser.parse_args(args)
 

@@ -54,7 +54,7 @@ def test_upgrade(
     pyproject_file.write_text(pyproject_toml_contents)
 
     with patch(run_uv_sync.__module__ + ".subprocess.run") as mock:
-        upgrade(pyproject_file)
+        upgrade(pyproject_file, verbose=True)
 
     mock.assert_called_once()
 
@@ -90,7 +90,7 @@ def test_update_with_upper_bound() -> None:
     content = """
         "polars>=1.20.0,<1.22",
     """
-    result = _update_pyproject_contents(content, {"polars": "1.21.0"})
+    result, _ = _update_pyproject_contents(content, {"polars": "1.21.0"})
     assert '"polars>=1.21.0,<1.22"' in result
 
 
@@ -98,9 +98,12 @@ def test_update_extras() -> None:
     content = """
         "polars[sql]>=1.20",
     """
-    assert '"polars[sql]>=1.21.0"' in _update_pyproject_contents(
-        content,
-        {"polars": "1.21.0"},
+    assert (
+        '"polars[sql]>=1.21.0"'
+        in _update_pyproject_contents(
+            content,
+            {"polars": "1.21.0"},
+        )[0]
     )
 
 
@@ -110,17 +113,22 @@ def test_update_no_equals_sign() -> None:
     content = """
        "polars==1.20.0",
     """
-    assert '"polars==1.20.0"' in _update_pyproject_contents(
+    result, packages_updated = _update_pyproject_contents(
         content,
         {"polars": "1.21.0"},
     )
+    assert '"polars==1.20.0"' in result
+    assert packages_updated == []
 
 
 def test_update_keep_comment() -> None:
     content = """
         "polars>=1.20.0",  # 1.21 has a bug
     """
-    assert '"polars>=1.21.0",  # 1.21 has a bug' in _update_pyproject_contents(
+    result, packages_updated = _update_pyproject_contents(
         content,
         {"polars": "1.21.0"},
     )
+
+    assert '"polars>=1.21.0",  # 1.21 has a bug' in result
+    assert packages_updated == ["polars"]
