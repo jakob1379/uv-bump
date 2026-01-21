@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pytest import CaptureFixture
 
 from uv_bump.main import (
     UVSyncError,
@@ -90,7 +91,7 @@ def test_update_with_upper_bound() -> None:
     content = """
         "polars>=1.20.0,<1.22",
     """
-    result, _ = _update_pyproject_contents(content, {"polars": "1.21.0"})
+    result, _, _ = _update_pyproject_contents(content, {"polars": "1.21.0"})
     assert '"polars>=1.21.0,<1.22"' in result
 
 
@@ -113,7 +114,7 @@ def test_update_no_equals_sign() -> None:
     content = """
        "polars==1.20.0",
     """
-    result, packages_updated = _update_pyproject_contents(
+    result, packages_updated, _ = _update_pyproject_contents(
         content,
         {"polars": "1.21.0"},
     )
@@ -125,10 +126,89 @@ def test_update_keep_comment() -> None:
     content = """
         "polars>=1.20.0",  # 1.21 has a bug
     """
-    result, packages_updated = _update_pyproject_contents(
+    result, packages_updated, _ = _update_pyproject_contents(
         content,
         {"polars": "1.21.0"},
     )
 
     assert '"polars>=1.21.0",  # 1.21 has a bug' in result
     assert packages_updated == ["polars"]
+
+
+def test_upgrade_verbose_shows_correct_before_after_versions(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
+    # Lock file content before uv sync
+    lock_before = """[[package]]
+name = "uv-bump"
+version = "0.1.2"
+
+[[package]]
+name = "polars"
+version = "1.20.0"
+"""
+    # Lock file content after uv sync (updated version)
+    lock_after = """[[package]]
+name = "uv-bump"
+version = "0.1.2"
+
+[[package]]
+name = "polars"
+version = "1.21.0"
+"""
+    pyproject_content = """[project]
+name = "uv-bump"
+version = "0.1.2"
+description = "Bump pyproject.toml dependency minimum versions."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "polars>=1.20.0,<1.22",
+]"""
+
+    lock_file = tmp_path / "uv.lock"
+    lock_file.write_text(lock_before)
+
+    pyproject_file = tmp_path / "pyproject.toml"
+    pyproject_file.write_text(pyproject_content)
+
+    # Mock run_uv_sync to write updated lock file
+    with patch(run_uv_sync.__module__ + ".run_uv_sync") as mock_run_uv_sync:
+
+        def mock_sync() -> None:
+            lock_file.write_text(lock_after)
+
+        mock_run_uv_sync.side_effect = mock_sync
+
+        upgrade(pyproject_file, verbose=True)
+        mock_run_uv_sync.assert_called_once()
+
+    # Capture verbose output
+    captured = capsys.readouterr()
+    output = captured.out
+
+    assert "\tpolars\t\t1.20.0 → 1.21.0" in output, (
+        f"Expected version change not found in output:\n{output}"
+    )
+
+
+def test_upgrade_verbose_shows_correct_before_after_from_pyproject_bug(
+    tmp_path: Path, lock_file_contents: str, pyproject_toml_contents: str, capsys: CaptureFixture[str]
+) -> None:
+
+
+    lock_file = tmp_path / "uv.lock"
+    lock_file.write_text(lock_file_contents)  # lock already has 1.21.0
+
+    pyproject_file = tmp_path / "pyproject.toml"
+    pyproject_file.write_text(pyproject_toml_contents)
+
+    with patch(run_uv_sync.__module__ + ".subprocess.run") as mock:
+        upgrade(pyproject_file, verbose=True)
+
+    mock.assert_called_once()
+
+    captured = capsys.readouterr()
+    output = captured.out
+
+    assert "\tpolars\t\t-\t\t1.20.0 → 1.21.0" in output, (
+        f"Expected version change not found in output:\n{output}"
+    )
