@@ -71,6 +71,24 @@ def test_collect_all_pyproject_files() -> None:
     assert resource_dir / "packages/my_lib/pyproject.toml" in result
 
 
+def test_collect_all_pyproject_files_manifest_without_members(tmp_path: Path) -> None:
+    """Test manifest without members returns single pyproject.toml, not KeyError."""
+    lock_file = tmp_path / "uv.lock"
+    lock_file.write_text("""version = 1
+requires-python = ">=3.11"
+
+[manifest]
+overrides = [{ name = "django", specifier = ">=6.0.1" }]
+
+[[package]]
+name = "my-project"
+version = "0.1.0"
+source = { virtual = "." }
+""")
+    result = collect_all_pyproject_files(lock_file)
+    assert result == [tmp_path / "pyproject.toml"]
+
+
 def test_upgrade_uv_sync_exception() -> None:
     with pytest.raises(UVSyncError) as error:  # noqa: PT012, SIM117
         with patch(upgrade.__module__ + ".subprocess.run") as mock:
