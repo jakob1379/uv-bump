@@ -131,7 +131,7 @@ def collect_all_pyproject_files(lock_path: Path) -> list[Path]:
     """
     contents = tomllib.loads(lock_path.read_text(encoding="utf-8"))
 
-    if "manifest" in contents:
+    if "manifest" in contents and "members" in contents["manifest"]:
         # workspaces
         member_paths = []
 
